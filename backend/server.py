@@ -3,6 +3,7 @@ import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from agents.heuristic_agent import HeuristicAgent
 from core.game_loop import GameLoop
 
 app = FastAPI()
@@ -26,15 +27,26 @@ class ManualController:
         self.next_action = "straight"
         return action
 
+AGENT_REGISTRY = {
+    "manual": ManualController,
+    "heuristic": HeuristicAgent,
+}
+DEFAULT_AGENT = "manual"
+
 
 @app.websocket("/ws")
 async def game_socket(websocket: WebSocket):
+    requested_agent = websocket.query_params.get("agent", DEFAULT_AGENT)
+    agent_factory = AGENT_REGISTRY.get(requested_agent, AGENT_REGISTRY[DEFAULT_AGENT])
+
     await websocket.accept()
 
     async def send_state(state: dict):
         await websocket.send_text(json.dumps(state))
 
-    controller = ManualController()
+    controller = agent_factory()
+    is_manual = isinstance(controller, ManualController)
+
     game_loop = GameLoop(controller, send_state)
     await game_loop.start()
 
@@ -44,7 +56,7 @@ async def game_socket(websocket: WebSocket):
             message = json.loads(raw_message)
             message_type = message.get("type")
 
-            if message_type == "action":
+            if message_type == "action" and is_manual:
                 controller.next_action = message.get("action", "straight")
 
             elif message_type == "reset":
